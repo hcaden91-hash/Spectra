@@ -1,13 +1,21 @@
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
 import { CART_STORAGE_KEY } from '../config'
+import { useAuth } from './AuthContext'
 import { useProducts } from './ProductsContext'
 import { useSiteConfig } from './SiteConfigContext'
 
 const CartContext = createContext(null)
 
-function readStoredCart() {
+/**
+ * Carts are scoped per account. A signed-out shopper gets the ":guest" cart;
+ * each signed-in user gets their own slot keyed by user id. Switching accounts
+ * therefore swaps carts instead of inheriting the previous one.
+ */
+const cartKeyFor = (userId) => `${CART_STORAGE_KEY}:${userId ?? 'guest'}`
+
+function readStoredCart(key) {
   try {
-    const raw = localStorage.getItem(CART_STORAGE_KEY)
+    const raw = localStorage.getItem(key)
     const parsed = raw ? JSON.parse(raw) : []
     return Array.isArray(parsed) ? parsed.filter((i) => i && i.id && i.qty > 0) : []
   } catch {
@@ -16,17 +24,45 @@ function readStoredCart() {
 }
 
 export function CartProvider({ children }) {
-  // items: [{ id, qty, snapshot: { brand, model, price } }]
-  // The snapshot keeps the drawer rendering if a product is deleted mid-session;
-  // live catalog data (price, stock) always wins when available.
-  const [items, setItems] = useState(readStoredCart)
-  const [isOpen, setIsOpen] = useState(false)
+  const { user } = useAuth()
   const { products } = useProducts()
   const { settings } = useSiteConfig()
 
+  const storageKey = cartKeyFor(user?.id)
+
+  // Key and items travel together in one state object. That pairing is what
+  // lets the persist effect below recognise — and skip — a stale write during
+  // the render where the account has changed but the items haven't reloaded.
+  // items: [{ id, qty, snapshot: { brand, model, price } }]
+  // The snapshot keeps the drawer rendering if a product is deleted mid-session;
+  // live catalog data (price, stock) always wins when available.
+  const [cart, setCart] = useState(() => {
+    const key = cartKeyFor(null)
+    return { key, items: readStoredCart(key) }
+  })
+  const [isOpen, setIsOpen] = useState(false)
+
+  // Account changed (sign in, sign out, or switch): load that account's cart.
   useEffect(() => {
-    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items))
-  }, [items])
+    setCart((c) => (c.key === storageKey ? c : { key: storageKey, items: readStoredCart(storageKey) }))
+    setIsOpen(false)
+  }, [storageKey])
+
+  // Persist — but never write one account's items into another's slot.
+  useEffect(() => {
+    if (cart.key !== storageKey) return
+    localStorage.setItem(storageKey, JSON.stringify(cart.items))
+  }, [cart, storageKey])
+
+  const items = cart.items
+
+  // Keeps every mutation below working on plain item arrays.
+  const setItems = useCallback((updater) => {
+    setCart((c) => ({
+      ...c,
+      items: typeof updater === 'function' ? updater(c.items) : updater,
+    }))
+  }, [])
 
   const openCart = useCallback(() => setIsOpen(true), [])
   const closeCart = useCallback(() => setIsOpen(false), [])
@@ -47,11 +83,11 @@ export function CartProvider({ children }) {
       ]
     })
     setIsOpen(true)
-  }, [])
+  }, [setItems])
 
   const increment = useCallback((id) => {
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, qty: Math.min(i.qty + 1, 99) } : i)))
-  }, [])
+  }, [setItems])
 
   const decrement = useCallback((id) => {
     setItems((prev) =>
@@ -59,13 +95,13 @@ export function CartProvider({ children }) {
         .map((i) => (i.id === id ? { ...i, qty: i.qty - 1 } : i))
         .filter((i) => i.qty > 0)
     )
-  }, [])
+  }, [setItems])
 
   const removeItem = useCallback((id) => {
     setItems((prev) => prev.filter((i) => i.id !== id))
-  }, [])
+  }, [setItems])
 
-  const clearCart = useCallback(() => setItems([]), [])
+  const clearCart = useCallback(() => setItems([]), [setItems])
 
   // Resolve each line against the live catalog, then price the order using
   // the admin-controlled tax/shipping settings (all realtime).
