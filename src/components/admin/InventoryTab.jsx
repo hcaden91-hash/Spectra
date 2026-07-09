@@ -12,14 +12,20 @@ function Toggle({ on, onClick, label, busy }) {
       role="switch"
       aria-checked={on}
       aria-label={label}
-      className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${
+      className={`relative inline-flex h-5 w-9 shrink-0 rounded-full align-middle transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
         on ? 'bg-accent' : 'bg-void'
       }`}
       style={{ border: '1px solid var(--line)' }}
     >
+      {/*
+        left-0.5 anchors the knob to the track instead of letting it inherit the
+        button's centered static position — without it, translate-x pushes the
+        knob off the right edge. top-1/2 + -translate-y-1/2 centers it regardless
+        of track height, and the two transforms compose.
+      */}
       <span
-        className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-fog transition-transform ${
-          on ? 'translate-x-4' : 'translate-x-0.5'
+        className={`absolute left-0.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-fog shadow-sm transition-transform duration-200 ease-out ${
+          on ? 'translate-x-4' : 'translate-x-0'
         }`}
       />
     </button>
